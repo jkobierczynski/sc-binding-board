@@ -4,6 +4,8 @@ A small, dependency-free web page that turns your Star Citizen bindings into a
 readable binding chart, one card per physical button, laid over a picture of
 your HOTAS.
 
+**Try it live: <https://jurgenkobierczynski.com/sc-binding-board/index.html>**
+
 - Reads the game's **`actionmaps.xml`** or an exported layout.
 - Optionally reads a **Joystick Gremlin profile** and follows every physical
   button through Gremlin → vJoy → game action, including modifier layers,
