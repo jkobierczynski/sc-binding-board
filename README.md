@@ -93,17 +93,24 @@ which device is in which hand, and the page that opens. Loading one switches
 all of that at once:
 
 - **Setup** (top of the page) lists the setups in this folder; choosing one
-  loads it. The list comes from `"setups"` in `default-layout.json`:
+  loads it. The list, and which one is the default, come from
+  `default-layout.json`:
 
   ```json
-  "setups": [
-    {"name": "VMAX throttle + Aeromax-R", "file": "default-layout.json"},
-    {"name": "Aeromax-L + Aeromax-R",     "file": "laero-raero-layout.json"}
-  ]
+  {
+   "app": "sc-binding-board",
+   "version": 1,
+   "default": "laero-raero-layout.json",
+   "setups": [
+    {"name": "Aeromax-L + Aeromax-R",     "file": "laero-raero-layout.json"},
+    {"name": "VMAX throttle + Aeromax-R", "file": "vmax-aero-layout.json"}
+   ]
+  }
   ```
 
-  The first entry is the default that visitors see. To add a setup, put its
-  layout JSON and the two XML files it names in this folder and add a line.
+  `default` is the setup visitors see first. **To make another setup the
+  default, change that one line.** To add a setup, put its layout JSON and
+  the two XML files it names in this folder and add a line to `setups`.
 - **Open…** or drag-and-drop accepts a layout JSON too. The XML files it names
   are taken from the same drop if they are there (the names don't have to
   match exactly), otherwise fetched from this folder. If one can't be found,
@@ -113,24 +120,26 @@ all of that at once:
 - The chosen setup is remembered in the browser. **Defaults** goes back to
   the default setup.
 
-### Default layout, view and bindings
+### Setup files: layout, view and bindings
 
-Put a `default-layout.json` next to `index.html` and the page starts from it:
+`default-layout.json` next to `index.html` decides what the page starts from.
+It points at a setup file (see above); a setup file looks like this:
 
 ```json
 {
  "app": "sc-binding-board",
  "version": 1,
- "bindings": ["layout_KJ_481_LIVE_VMAX_AERO_exported.xml",
-              "Joystick Gremlin Profile [ENH][VMAX+AERO][4.5.0]-KJ.xml"],
+ "bindings": ["layout_KJ_410_LIVE_LAERO_RAERO_exported.xml",
+              "Joystick Gremlin Profile [ENH][LAERO+RAERO][4.10.0]-KJ.xml"],
  "tab": "both",
- "sides": {"left": "vpc cdt-vmax throttle", "right": "right vpc cdt-aeromax"},
+ "sides": {"left": "l-vpc cdt-aeromax", "right": "right vpc cdt-aeromax"},
  "layouts": { … }
 }
 ```
 
 - Easiest way to make one: arrange your charts, open **Layout JSON**, press
-  **Copy** and save it as `default-layout.json`. The copy includes
+  **Copy** and save it under the setup's file name (for the default setup
+  here: `laero-raero-layout.json`). The copy includes
   everything below: the loaded bindings files, the open page, the hands, and
   every device's layout (card positions, pins, picture, mirroring).
 - `bindings` (optional) lists the files to show until a visitor drops their
@@ -141,11 +150,14 @@ Put a `default-layout.json` next to `index.html` and the page starts from it:
   `all`, or a device id such as `js1`.
 - `sides` (optional) says which device is in which hand, by device name in
   lower case (the same names used as keys in `layouts`).
-- When `default-layout.json` changes, every browser applies it again on its
-  next visit, replacing its stored layouts, view and hands. Between changes,
-  a visitor's own arrangement is kept. The **Defaults** button (top right)
-  goes back to the defaults at any time, including the default bindings.
-- The file is fetched, so the page has to be served over http(s). Opened
+- When the setup a visitor is on changes (or the default becomes another
+  setup), their browser applies it again on its next visit, replacing its
+  stored layouts, view and hands. Between changes, a visitor's own
+  arrangement is kept. The **Defaults** button (top right) goes back to the
+  default setup at any time, including its bindings.
+- A single-setup site can skip the pointer: a `default-layout.json` that is
+  itself a setup file (with `layouts` and `bindings`) still works.
+- The files are fetched, so the page has to be served over http(s). Opened
   straight from disk, the defaults are skipped.
 
 ### Browsers and HOTAS buttons
@@ -171,11 +183,10 @@ Put a `default-layout.json` next to `index.html` and the page starts from it:
 
 ```
 index.html                 page markup
-default-layout.json        the default setup, and the list of setups
-laero-raero-layout.json    setup: Aeromax-L + Aeromax-R (with its two XML files)
-layout_KJ_481_…xml         default game bindings (KJ 4.8.1 export)
-Joystick Gremlin Profile … default Gremlin profile (KJ 4.5.0)
-*.xml                      default bindings files named in default-layout.json
+default-layout.json        the list of setups, and which one is the default
+laero-raero-layout.json    default setup: Aeromax-L + Aeromax-R
+vmax-aero-layout.json      setup: VMAX throttle + Aeromax-R
+*.xml                      the game bindings and Gremlin profile of each setup
 css/style.css              styles
 js/app.js                  parser, Gremlin resolver and board UI
 assets/virpil/*.webp       device pictures (background removed)

@@ -1840,7 +1840,9 @@ async function applySetup(o, {dropped = [], label = "", file = null} = {}){
   return used;
 }
 
-/* Setup picker: the setups listed in default-layout.json ("setups": [{name, file}]). */
+/* Setup picker: the setups listed in default-layout.json ("setups": [{name, file}]).
+   A hosted setup is never copied into the browser: its files are fetched on every visit, and only
+   the choice (scbb.setup) is remembered. */
 function setupList(){ return DEFAULTS && Array.isArray(DEFAULTS.setups) ? DEFAULTS.setups : []; }
 function renderSetups(){
   const sel = $("#setupSel"); if (!sel) return;
@@ -1848,24 +1850,33 @@ function renderSetups(){
   sel.parentElement.hidden = !list.length;
   if (!list.length) return;
   const own = !!(store.get("scbb.xml", null) || store.get("scbb.gremlin", null));
-  let cur = store.get("scbb.setup", null);
-  if (!cur || (cur !== "custom" && !list.some(s => s.file === cur))) cur = own ? "custom" : (list[0] && list[0].file);
-  if (cur !== "custom" && cur !== list[0].file && !own) cur = list[0].file;
+  const cur = own ? "custom" : ACTIVE_SETUP;
   sel.textContent = "";
-  for (const s of list) sel.append(el("option",{value:s.file}, s.name));
+  for (const s of list) sel.append(el("option",{value:s.file}, s.name + (s.file === DEFAULT_SETUP ? " (default)" : "")));
   if (cur === "custom") sel.append(el("option",{value:"custom"}, "Your own files"));
+  else if (!list.some(s => s.file === cur)) sel.append(el("option",{value:cur}, "Default"));
   sel.value = cur;
 }
 async function chooseSetup(file){
-  const list = setupList(), s = list.find(x => x.file === file);
-  if (!s) return;
-  if (s === list[0] && (s.file === DEFAULTS_URL || !s.data)){ await resetToDefaults(); store.set("scbb.setup", s.file); renderSetups(); return; }
-  try {
-    const o = s.data || parseSetup(await fetchText(s.file));
-    if (!o) throw new Error(s.file + " isn’t a Binding Board layout file.");
-    await applySetup(o, {label:s.name, file:s.file});
-  } catch(e){ toast("Couldn’t load that setup: " + e.message, true); }
+  const s = setupList().find(x => x.file === file);
+  if (!s){ renderSetups(); return; }
+  if (await useSetup(file)) toast("Setup loaded: " + s.name, false, 5000);
+}
+/* Switch to a hosted setup: its layouts, pictures, hands, opening page and both bindings files. */
+async function useSetup(file, wipe){
+  const d = await loadDefaults(file);
+  if (!d){ renderSetups(); return false; }
+  DEFAULTS = d;
+  for (const k of ["scbb.xml","scbb.gremlin","scbb.tab","scbb.sides"]) store.set(k, null);
+  store.set("scbb.setup", ACTIVE_SETUP === DEFAULT_SETUP ? null : ACTIVE_SETUP);
+  store.set("scbb.defaultsStamp", DEFAULTS_STAMP);
+  S.sc = S.gr = null; S.scDefault = S.grDefault = S.isExample = false; S.scName = S.grName = "";
+  S.cmp = null; S.q = ""; $("#q").value = "";
+  if (wipe) layouts = {};
+  applyDefaults(true);
+  if (!(await loadDefaultBindings())) rebuild();
   renderSetups();
+  return ACTIVE_SETUP === file;
 }
 $("#btnOpen").addEventListener("click", ()=>$("#file").click());
 $("#file").addEventListener("change", e=>{ const fs = [...e.target.files]; e.target.value = ""; handleFiles(fs).then(renderSetups); });
@@ -2008,31 +2019,58 @@ const DEMO = `<?xml version="1.0"?>
 </ActionMaps>`;
 
 /* ------------------------------------------------------------ defaults */
-/* default-layout.json next to index.html sets what a first-time visitor sees:
+/* default-layout.json next to index.html sets what a first-time visitor sees. It is either
+     a pointer:  {"default": "my-setup.json", "setups": [{"name": "…", "file": "my-setup.json"}, …]}
+     or a setup: the layout JSON itself (and it may still carry a "setups" list).
+   A setup file holds
      "layouts"  – card positions, pins, device pictures (same format as Layout JSON)
      "bindings" – optional list of actionmaps / Gremlin files (paths relative to index.html) shown
                   until the visitor drops their own.
-   Layouts a visitor has arranged themselves are never overwritten. The file is fetched, so the page
+     "tab", "sides" – the page that opens and which device is in which hand.
+   Layouts a visitor has arranged themselves are never overwritten. The files are fetched, so the page
    must be served over http(s) (GitHub Pages, or `python -m http.server`); opened from disk it is skipped. */
 const DEFAULTS_URL = "default-layout.json";
-let DEFAULTS = null;
+let DEFAULTS = null, DEFAULT_SETUP = DEFAULTS_URL, ACTIVE_SETUP = DEFAULTS_URL;
 async function fetchText(url){
   const r = await fetch(url.split("/").map(s => s === ".." || s === "." ? s : encodeURIComponent(s)).join("/"), {cache:"no-cache"});
   if (!r.ok) throw new Error(url + ": HTTP " + r.status);
   return r.text();
 }
 let DEFAULTS_STAMP = "";
-async function loadDefaults(){
-  let text = "";
-  if (window.SCBB_DEFAULTS){ text = JSON.stringify(window.SCBB_DEFAULTS); }
+/* Reads default-layout.json and the setup to show: `want` (a file from its "setups" list) or else the
+   default one. Returns that setup with the list and the default's file name added, or null. */
+async function loadDefaults(want){
+  let idx, idxText = "";
+  if (window.SCBB_DEFAULTS) idx = window.SCBB_DEFAULTS;
   else if (location.protocol === "file:") return null;
-  else { try { text = await fetchText(DEFAULTS_URL); } catch { return null; } }
-  try {
-    const d = window.SCBB_DEFAULTS || JSON.parse(text);
-    let h = 0; for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
-    DEFAULTS_STAMP = text.length + ":" + h;
-    return d;
-  } catch { toast("default-layout.json isn’t valid JSON, so the defaults were skipped.", true); return null; }
+  else {
+    try { idxText = await fetchText(DEFAULTS_URL); } catch { return null; }
+    try { idx = JSON.parse(idxText); } catch { idx = null; }
+  }
+  if (!idx || typeof idx !== "object"){ toast("default-layout.json isn’t valid JSON, so the defaults were skipped.", true); return null; }
+  const list = Array.isArray(idx.setups) ? idx.setups.filter(s => s && typeof s.file === "string" && s.file) : [];
+  const self = !!(idx.layouts || idx.bindings);                 // default-layout.json is a setup itself
+  const dflt = (typeof idx.default === "string" && idx.default) || (self ? DEFAULTS_URL : (list[0] && list[0].file)) || DEFAULTS_URL;
+  const read = async file => {
+    const s = list.find(x => x.file === file);
+    if (s && s.data) return {o:s.data, text:JSON.stringify(s.data)};
+    if (file === DEFAULTS_URL) return {o:idx, text:idxText || JSON.stringify(idx)};
+    const text = await fetchText(file), o = parseSetup(text);
+    if (!o) throw new Error(file + " isn’t a Binding Board layout file.");
+    return {o, text};
+  };
+  let file = want && (want === dflt || list.some(s => s.file === want)) ? want : dflt, got = null;
+  try { got = await read(file); }
+  catch(e){
+    toast("Couldn’t load the setup " + file + " (" + e.message + ")" + (file !== dflt ? ", so the default is shown." : "."), true, 8000);
+    if (file !== dflt){ file = dflt; try { got = await read(file); } catch {} }
+  }
+  if (!got) return null;
+  DEFAULT_SETUP = dflt; ACTIVE_SETUP = file;
+  const text = file + "\n" + got.text;
+  let h = 0; for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
+  DEFAULTS_STAMP = text.length + ":" + h;
+  return Object.assign({}, got.o, {setups:list, default:dflt});
 }
 const untouched = lay => !lay || (!lay.image && Object.values(lay.cards||{}).every(c => c.auto !== false && !c.anchor));
 /* force = true when default-layout.json is new or has changed since this browser last saw it:
@@ -2064,7 +2102,7 @@ async function loadDefaultBindings(){
       got.push({text, name: (typeof item === "object" && item.name) || path.split("/").pop()});
     } catch { failed.push(path); }
   }
-  if (failed.length) toast("Couldn’t load the default bindings file" + (failed.length > 1 ? "s " : " ") + failed.join(", ") + ". Paths in default-layout.json are relative to index.html.", true);
+  if (failed.length) toast("Couldn’t load the default bindings file" + (failed.length > 1 ? "s " : " ") + failed.join(", ") + ". Paths in the setup file are relative to index.html.", true);
   // game bindings first, so the Gremlin profile resolves against them
   got.sort((a,b) => (sniff(a.text) === "sc" ? 0 : 1) - (sniff(b.text) === "sc" ? 0 : 1));
   for (const f of got) load(f.text, f.name, false, true, true);
@@ -2072,18 +2110,18 @@ async function loadDefaultBindings(){
   return got.length > 0;
 }
 async function resetToDefaults(){
-  for (const k of ["scbb.xml","scbb.gremlin","scbb.tab","scbb.sides","scbb.setup"]) store.set(k, null);
-  S.sc = S.gr = null; S.scDefault = S.grDefault = S.isExample = false; S.q = ""; $("#q").value = "";
-  layouts = {}; applyDefaults(true);
-  if (!(await loadDefaultBindings())) rebuild();
-  renderSetups();
-  toast("Back to the default layout and bindings");
+  if (await useSetup(DEFAULT_SETUP, true)) toast("Back to the default layout and bindings");
 }
 
 /* ------------------------------------------------------------ boot */
 (async () => {
-  DEFAULTS = await loadDefaults();
+  const want = store.get("scbb.setup", null), hosted = want && want !== "custom";
+  DEFAULTS = await loadDefaults(hosted ? want : null);
   if (DEFAULTS){
+    if (hosted){   // a hosted setup is fetched, not stored (older versions kept a copy of its files)
+      store.set("scbb.xml", null); store.set("scbb.gremlin", null);
+      if (ACTIVE_SETUP !== want || want === DEFAULT_SETUP) store.set("scbb.setup", null);
+    }
     const fresh = store.get("scbb.defaultsStamp", null) !== DEFAULTS_STAMP;
     applyDefaults(fresh);
     store.set("scbb.defaultsStamp", DEFAULTS_STAMP);
